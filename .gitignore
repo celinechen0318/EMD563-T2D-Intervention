@@ -1,3 +1,4 @@
 .DS_Store
 *.db
 EMD563_venv/
+__pycache__/
