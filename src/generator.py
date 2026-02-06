@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import random
-import db_manager  # 导入刚才写的数据库模块
+import db_manager  
 
 # ADA 2026 GUIDELINES CONFIGURATION 
 ADA_TARGETS = {
