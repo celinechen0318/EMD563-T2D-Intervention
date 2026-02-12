@@ -2,26 +2,33 @@ import sqlite3
 import os
 import pandas as pd
 
-
+# Path to the database file
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'database', 't2d_system.db')
 
 def init_db():
+    """Initialize the database: Create tables for the Pilot Program."""
+    # Ensure the directory exists
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
-    # User - according to ADA Guideline
+    # 1. User Table 
+    # Stores user profile and ADA targets
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             age INTEGER,
             
-            -- 核心分类字段: 'Standard'(<65), 'Healthy', 'Complex', 'PoorHealth'
-            health_status TEXT, 
+            -- New Risk Variables (Requested by Prof)
+            bmi REAL,                  -- T2D Precursor
+            family_history TEXT,       -- 'Yes' or 'No' (Binary)
             
-            -- 个性化目标 (由 Generator 自动填入)
+            -- Core Classification
+            health_status TEXT,        -- 'Standard', 'Healthy', 'Complex', 'PoorHealth'
+            
+            -- Personalized Targets (ADA 2026)
             target_fasting_min INTEGER,  
             target_fasting_max INTEGER,
             target_postmeal_max INTEGER,
@@ -30,7 +37,8 @@ def init_db():
         )
     ''')
     
-    # Readings Biometrics + Context + Symptoms
+    # 2. Readings Table 
+    # Stores daily metrics and context
     c.execute('''
         CREATE TABLE IF NOT EXISTS readings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,17 +47,18 @@ def init_db():
             
             -- A. Biometrics
             glucose_level REAL,
+            insulin_level REAL,      -- New: Insulin (uIU/mL)
             bp_systolic INTEGER,
             bp_diastolic INTEGER,
             
             -- B. Context
-            meal_tag TEXT,           -- 'Before Breakfast', '2h After Lunch' 等
+            meal_tag TEXT,           -- e.g., 'Before Breakfast'
             medication_taken TEXT,   -- 'Yes', 'No', 'Missed'
             activity_notes TEXT,     -- 'Sedentary', 'Walking'
             carbs_intake TEXT,       -- 'Normal', 'High'
             
-            -- C. 症状 (Symptoms)
-            symptoms TEXT,           -- 'None', 'Dizzy', 'Thirsty'
+            -- C. Symptoms
+            symptoms TEXT,           
             
             FOREIGN KEY(user_id) REFERENCES users(user_id)
         )
@@ -57,22 +66,35 @@ def init_db():
     
     conn.commit()
     conn.close()
-    print(f"Database (ADA 2026 Version) initialized at: {DB_PATH}")
+    print(f"Database initialized at: {DB_PATH}")
 
 def reset_db():
+    """For development: Completely reset the database."""
     if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
-        print("Old database deleted.")
+        try:
+            os.remove(DB_PATH)
+            print("Old database deleted.")
+        except PermissionError:
+            print("Could not delete DB file. It might be open elsewhere.")
     init_db()
 
 def create_user(profile):
+    """Insert a new user into the database."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    
     c.execute('''
-        INSERT INTO users (name, age, health_status, target_fasting_min, target_fasting_max, target_postmeal_max, target_bp_systolic, target_bp_diastolic)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO users (
+            name, age, bmi, family_history, health_status, 
+            target_fasting_min, target_fasting_max, 
+            target_postmeal_max, target_bp_systolic, target_bp_diastolic
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        profile['name'], profile['age'], profile['health_status'],
+        profile['name'], profile['age'], 
+        profile.get('bmi', 24.0),                 # Default if missing
+        profile.get('family_history', 'No'),      # Default to No
+        profile['health_status'],
         profile['target_fasting_min'], profile['target_fasting_max'], 
         profile['target_postmeal_max'], profile['target_bp_systolic'], 
         profile['target_bp_diastolic']
@@ -83,16 +105,21 @@ def create_user(profile):
     return user_id
 
 def add_reading_from_dict(reading_data):
+    """Insert a single reading record."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    
     c.execute('''
         INSERT INTO readings (
-            user_id, timestamp, glucose_level, bp_systolic, bp_diastolic,
+            user_id, timestamp, glucose_level, insulin_level,
+            bp_systolic, bp_diastolic,
             meal_tag, medication_taken, activity_notes, carbs_intake, symptoms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         reading_data['user_id'], reading_data['timestamp'], 
-        reading_data['glucose_level'], reading_data['bp_systolic'], reading_data['bp_diastolic'],
+        reading_data['glucose_level'], 
+        reading_data.get('insulin_level', 0.0),   # Default if missing
+        reading_data['bp_systolic'], reading_data['bp_diastolic'],
         reading_data['meal_tag'], reading_data['medication_taken'], 
         reading_data['activity_notes'], reading_data['carbs_intake'], reading_data['symptoms']
     ))
@@ -100,6 +127,7 @@ def add_reading_from_dict(reading_data):
     conn.close()
 
 def get_recent_readings(user_id, limit=50):
+    """Fetch recent readings for the dashboard."""
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql_query(
         f"SELECT * FROM readings WHERE user_id={user_id} ORDER BY timestamp DESC LIMIT {limit}",
